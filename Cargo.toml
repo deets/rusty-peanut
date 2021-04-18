@@ -1,0 +1,16 @@
+[package]
+name = "rusty-peanut"
+version = "0.1.0"
+authors = ["Diez B. Roggisch <deets@web.de>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serialport="4.0.0"
+hex="0.4.3"
+log = "0.4"
+env_logger = "0.8.3"
+
+[dev-dependencies]
+test-env-log = "0.2.7"
