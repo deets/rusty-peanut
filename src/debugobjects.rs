@@ -1,23 +1,38 @@
 use std::collections::hash_map::HashMap;
 use std::vec::Vec;
+use std::collections::VecDeque;
 use log::{debug, warn};
 
-trait DebugProcessor
+pub trait DebugProcessor
 {
     fn name(&self) -> String;
 }
 
 pub struct Scope
 {
-    name: String
+    name: String,
+    pub values: VecDeque<f32>,
+    length: usize
+
 }
 
 impl Scope {
 
-    fn new(tokens: &Vec<String>) -> Scope
+    pub fn new(tokens: &Vec<String>) -> Scope
     {
 	assert!(tokens.len() >= 1);
-	Scope{ name: tokens[0].clone() }
+	let mut values = VecDeque::new();
+	values.push_back(0.0);
+	values.push_back(0.0);
+	Scope{ name: tokens[0].clone(), values, length: 128 }
+    }
+
+    pub fn feed(&mut self, value: f32)
+    {
+	self.values.push_back(value);
+	while self.values.len() >= self.length {
+	    self.values.pop_front();
+	}
     }
 }
 
@@ -127,5 +142,12 @@ mod tests {
     fn instantiate_scope_through_debug_objects() {
 	let mut debug_objects = DebugObjects::new();
 	debug_objects.feed("`SCOPE MyScope SIZE 254 84 SAMPLES 128");
+    }
+
+    #[test]
+    fn instantiate_scope_configure_and_feed() {
+	for line in String::from(SCOPE_DECLARATION).split_terminator("\r\n") {
+	    debug_objects.feed(&line);
+	}
     }
 }
