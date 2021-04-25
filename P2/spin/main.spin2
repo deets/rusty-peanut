@@ -1,0 +1,17 @@
+{
+  Simple example program that illustrates how to use ads111X
+}
+con
+  _clkfreq = 160_000_000
+
+
+pub main() | i
+
+  debug(`SCOPE MyScope SIZE 254 84 SAMPLES 128)
+  debug(`MyScope 'Sawtooth' 0 63 64 10 %1111)
+
+  i := 0
+  repeat
+    debug(`MyScope `(i & 63))
+    i++
+    waitms(10)
