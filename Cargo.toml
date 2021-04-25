@@ -12,6 +12,7 @@ hex="0.4.3"
 log = "0.4"
 env_logger = "0.8.3"
 nannou = "0.15.0"
+crossbeam = "0.8.0"
 
 [dev-dependencies]
 test-env-log = "0.2.7"

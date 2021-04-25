@@ -1,30 +1,37 @@
-use core::time::Duration;
+use std::thread;
+use std::time::Duration;
+use crossbeam::channel::{Receiver, unbounded};
 
-const BAUD:u32 = 230_400;
-const PORT:&str = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_00000000-if00-port0";
-
-fn work() -> serialport::Result<()>
+pub struct SerialConnector
 {
-    let mut port = serialport::new(PORT, BAUD).open()?;
-    port.set_timeout(Duration::from_millis(1000))?;
-    loop {
-	let mut buffer: [u8; 1024] = [0; 1024];
-	match port.read(&mut buffer)
-	{
-	    Ok(bytes_read) => {
-		if let Ok(s) = std::str::from_utf8(&buffer[0..bytes_read])
-		{
-		    print!("{}", s);
-		}
-	    }
-	    Err(error) => {
-		println!("error: {:?}", error);
-	    }
-	}
-    }
+    pub receiver: Receiver<String>
 }
 
-fn main() {
-    println!("Hello, world! This is Rusty Peanut!");
-    work().expect("Work failed!");
+impl SerialConnector
+{
+    pub fn new(port: &str, baud: u32) -> Result<SerialConnector, serialport::Error>
+    {
+	let mut port = serialport::new(port, baud).open()?;
+	port.set_timeout(Duration::from_millis(1000))?;
+
+	let (s, r) = unbounded();
+	thread::spawn(move || {
+	    loop {
+		let mut buffer: [u8; 1024] = [0; 1024];
+		match port.read(&mut buffer)
+		{
+		    Ok(bytes_read) => {
+			if let Ok(debug_line) = std::str::from_utf8(&buffer[0..bytes_read])
+			{
+			    s.send(debug_line.to_string()).expect("serial crossbeam channel failed");
+			}
+		    }
+		    Err(error) => {
+			println!("error: {:?}", error);
+		    }
+		}
+	    }
+	});
+	Ok(SerialConnector{receiver: r})
+    }
 }
