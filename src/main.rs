@@ -1,14 +1,13 @@
 #![feature(clamp)]
 use nannou::prelude::*;
 
+use log::{debug};
+
 mod serial;
 mod debugobjects;
 
 use serial::SerialConnector;
-use debugobjects::{Scope, DebugProcessor};
-
-const HZ:f32 = 1.0;
-const AMP:f32 = 100.0;
+use debugobjects::{Scope, DebugProcessor, DebugLine};
 
 const BAUD:u32 = 230_400;
 const PORT:&str = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_00000000-if00-port0";
@@ -25,16 +24,18 @@ fn model(_app: &App) -> Model {
     Model { scope, serial }
 }
 
-fn update(app: &App, model: &mut Model, _update: Update)
+fn update(_app: &App, model: &mut Model, _update: Update)
 {
-    let t = app.time;
-    let value = (t * HZ * TAU).sin() * AMP;
     for line in model.serial.receiver.try_iter() {
-	print!("{}", line);
+	match DebugLine::from_str(&line) {
+	    Ok(debug_line) => {
+		debug!("feeding Scope tokens {:?}", debug_line.tokens);
+		model.scope.feed(debug_line.tokens);
+	    }
+	    _ => {}
+	}
     }
-    model.scope.feed(vec![value]);
 }
-
 
 fn view(app: &App, model: &Model, frame: Frame) {
     // Begin drawing
@@ -46,6 +47,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
 }
 
 fn main() {
+    //env_logger::init();
     nannou::app(model)
         .update(update)
         .simple_window(view)

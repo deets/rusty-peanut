@@ -7,10 +7,33 @@ use log::{debug, warn};
 type Rect = nannou::geom::rect::Rect;
 type Color = Rgb<u8>;
 
+pub struct DebugLine
+{
+    pub keyword: String,
+    pub tokens: Vec<String>
+}
+
+impl DebugLine
+{
+    pub fn from_str(line: &str) -> std::result::Result<DebugLine, String>
+    {
+	let tokens:Vec<String> = line.split_whitespace().map(|s| { s.to_string() }).filter(|part| { part.len() > 0 }).collect();
+	if tokens.len() > 0{
+	    let mut keyword = tokens[0].clone();
+	    if keyword.starts_with("`") {
+		keyword = keyword[1..].to_string();
+		return Ok(DebugLine{keyword: keyword, tokens: tokens[1..].to_vec()});
+	    }
+	}
+	Err(format!("Can't parse line '{}'", line))
+    }
+}
+
 pub trait DebugProcessor
 {
     fn name(&self) -> String;
     fn draw(&self, draw: &nannou::draw::Draw);
+    fn feed(&mut self, tokens: Vec<String>);
 }
 
 struct ScopeSignal
@@ -70,7 +93,7 @@ impl Scope {
 	res
     }
 
-    pub fn feed(&mut self, values: Vec<f32>)
+    pub fn feed_floats(&mut self, values: Vec<f32>)
     {
 	if values.len() != self.signals.len() {
 	    warn!("Scope<{}>::feed values and signals length differ", self.name);
@@ -87,6 +110,7 @@ impl Scope {
 }
 
 impl DebugProcessor for Scope {
+
     fn name(&self) -> String {
 	self.name.clone()
     }
@@ -120,6 +144,31 @@ impl DebugProcessor for Scope {
 	    draw.xy(-wh / 2.0).mesh().tris_colored(tris);
 	});
     }
+
+    fn feed(&mut self, tokens: Vec<String>)
+    {
+	let mut err = Ok(());
+	let mut floats = vec![];
+	for token in tokens {
+	    match token.parse::<f32>() {
+		Ok(number) => {
+		    floats.push(number);
+		}
+		Err(e) => {
+		    err = Err(e);
+		    break;
+		}
+	    }
+	}
+	match err {
+	    Ok(_) => {
+		self.feed_floats(floats);
+	    }
+	    _ => {
+		warn!("couldn't parse floats, maybe config line");
+	    }
+	}
+    }
 }
 
 pub enum DebugObject
@@ -141,6 +190,13 @@ impl DebugProcessor for DebugObject
 	    DebugObject::Scope(scope) => { scope.draw(draw); }
 	}
     }
+
+    fn feed(&mut self, tokens: Vec<String>)
+    {
+	match self {
+	    DebugObject::Scope(scope) => { scope.feed(tokens); }
+	}
+    }
 }
 
 pub struct DebugObjects
@@ -156,41 +212,25 @@ impl DebugObjects
     }
 }
 
-struct DebugLine
-{
-    keyword: String,
-    tokens: Vec<String>
-}
-
-fn parse_line(line: &str) -> std::result::Result<DebugLine, String>
-{
-    let tokens:Vec<String> = line.split_whitespace().map(|s| { s.to_string() }).filter(|part| { part.len() > 0 }).collect();
-    if tokens.len() > 0{
-	let mut keyword = tokens[0].clone();
-	if keyword.starts_with("`") {
-	    keyword = keyword[1..].to_string();
-	    return Ok(DebugLine{keyword: keyword, tokens: tokens[1..].to_vec()});
-	}
-    }
-    Err(format!("Can't parse line '{}'", line))
-}
-
 impl DebugObjects
 {
     pub fn feed(&mut self, line: &str)
     {
-	debug!("feeding line {}", line);
-	let line = parse_line(line).expect("error parsing line");
-	if self.objects.contains_key(&line.keyword) {
-	    debug!("found DebugObject, feeding to it");
-	} else {
-	    debug!("no DebugObject for keyword  {} - trying to create one", line.keyword);
-	    match self.create(&line.keyword, &line.tokens)
-	    {
-		Some(new_object) => {
-		    self.objects.insert(new_object.name(), new_object);
-		},
-		_ => { warn!("No factory found for {}", line.keyword); }
+	let line = DebugLine::from_str(line).expect("error parsing line");
+	match self.objects.get_mut(&line.keyword) {
+	    Some(debug_object) => {
+		debug!("found DebugObject `{}, feeding to it", debug_object.name());
+		debug_object.feed(line.tokens);
+	    }
+	    None => {
+		debug!("no DebugObject for keyword  {} - trying to create one", line.keyword);
+		match self.create(&line.keyword, &line.tokens)
+		{
+		    Some(new_object) => {
+			self.objects.insert(new_object.name(), new_object);
+		    },
+		    _ => { warn!("No factory found for {}", line.keyword); }
+		}
 	    }
 	}
     }
@@ -201,7 +241,7 @@ impl DebugObjects
 	// name, which will become the identifier.
 	if tokens.len() >= 1 {
 	    if keyword == "SCOPE" {
-		debug!("Createda Scope object named {}", tokens[0]);
+		debug!("created Scope object named {}", tokens[0]);
 		return Some(DebugObject::Scope(Scope::new(tokens)))
 	    }
 	}
@@ -233,8 +273,11 @@ mod tests {
 
     #[test]
     fn instantiate_scope_configure_and_feed() {
-	for line in String::from(SCOPE_DECLARATION).split_terminator("\r\n") {
-	    debug_objects.feed(&line);
+	let mut debug_objects = DebugObjects::new();
+	debug_objects.feed("`SCOPE MyScope SIZE 254 84 SAMPLES 128");
+	for line in String::from(SCOPE_DECLARATION).split_terminator("\r\n")
+	{
+	    debug_objects.feed(line);
 	}
     }
 }
