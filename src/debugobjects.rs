@@ -8,6 +8,10 @@ use thiserror::Error;
 type Rect = nannou::geom::rect::Rect;
 type Color = Rgb<u8>;
 
+pub fn to_tokens(tokens: &[&str]) -> Vec<String>
+{
+    tokens.iter().map(|s| { s.to_string() }).collect()
+}
 
 #[derive(Error, Debug)]
 pub enum DebugObjectError
@@ -116,13 +120,45 @@ impl ScopeConfig
     }
 }
 
+struct ScopeSignalConfig
+{
+    name: String,
+    min: f32,
+    max: f32,
+    y_size: f32,
+    y_base: f32,
+    color: Color,
+}
+
+impl ScopeSignalConfig
+{
+    fn from_tokens(tokens: &Vec<String>) -> Result<ScopeSignalConfig, DebugObjectError>
+    {
+	let name = tokens.get(0).ok_or(DebugObjectError::NoNameGiven)?;
+	let min = tokens.get(1).ok_or(DebugObjectError::IndexError)?.parse::<f32>()?;
+	let max = tokens.get(2).ok_or(DebugObjectError::IndexError)?.parse::<f32>()?;
+	let y_size = tokens.get(3).ok_or(DebugObjectError::IndexError)?.parse::<f32>()?;
+	let y_base = tokens.get(4).ok_or(DebugObjectError::IndexError)?.parse::<f32>()?;
+	let color = BLUE;
+
+	Ok(ScopeSignalConfig{
+	    name: strip_single_quotes(name).to_string(),
+	    min,
+	    max,
+	    y_size,
+	    y_base,
+	    color,
+	})
+    }
+}
+
 struct ScopeSignal
 {
     name: String,
     min: f32,
     max: f32,
-    y_size: Option<f32>,
-    y_base: Option<f32>,
+    y_size: f32,
+    y_base: f32,
     //{legend
     color: Color,
     pub values: VecDeque<f32>,
@@ -140,37 +176,17 @@ pub struct Scope
 
 impl Scope {
 
-    pub fn new(tokens: &Vec<String>) -> Scope
+    pub fn new(tokens: &Vec<String>) -> Result<Scope, DebugObjectError>
     {
-	assert!(tokens.len() >= 1);
-
-	let mut values = VecDeque::new();
-	values.push_back(0.0);
-	values.push_back(0.0);
-
-	let size: usize = 256;
-	let height = 256.0;
-	let width = 255.0;
+	let config = ScopeConfig::from_tokens(tokens)?;
 
 	let mut res = Scope{
-	    name: tokens[0].clone(),
-	    samples: size,
-	    rect: Rect::from_x_y_w_h(0.0, 0.0, width, height),
+	    name: config.name,
+	    samples: config.samples,
+	    rect: Rect::from_x_y_w_h(0.0, 0.0, config.size.x, config.size.y),
 	    signals: vec![],
 	};
-	res.signals.push(
-	    ScopeSignal
-	    {
-		name: "Test".to_string(),
-		min: -100.0,
-		max: 100.0,
-		y_size: None,
-		y_base: None,
-		color: GREEN,
-		values: VecDeque::from(vec![0.0, 0.0])
-	    }
-	);
-	res
+	Ok(res)
     }
 
     pub fn feed_floats(&mut self, values: Vec<f32>)
@@ -188,9 +204,21 @@ impl Scope {
 	    });
     }
 
-    fn setup_signal(&mut self, tokens: &Vec<String>) -> Result<(), String>
+    pub fn setup_signal(&mut self, tokens: &Vec<String>) -> Result<(), DebugObjectError>
     {
-	Err("not implemented".to_string())
+	let sc = ScopeSignalConfig::from_tokens(tokens)?;
+	self.signals.push(
+	    ScopeSignal
+	    {
+	       name: sc.name,
+	       min: sc.min,
+	       max: sc.max,
+	       y_size: sc.y_size,
+	       y_base: sc.y_base,
+	       color: sc.color,
+	       values: VecDeque::from(vec![0.0, 0.0])
+	    });
+	Ok(())
     }
 }
 
@@ -212,10 +240,10 @@ impl DebugProcessor for Scope {
 		.flat_map(|(i, (left, right))| {
 		    let l_x = step * i as f32;
 		    let r_x = step * (i + 1) as f32;
-		    let a = pt2(l_x, map_range(*left, signal.min, signal.max, 0.0, wh.y));
-		    let b = pt2(r_x, map_range(*right, signal.min, signal.max, 0.0, wh.y));
-		    let c = pt2(r_x, map_range(0.0, signal.min, signal.max, 0.0, wh.y));
-		    let d = pt2(l_x, map_range(0.0, signal.min, signal.max, 0.0, wh.y));
+		    let a = pt2(l_x, map_range(*left, signal.min, signal.max, 0.0, signal.y_size) + signal.y_base);
+		    let b = pt2(r_x, map_range(*right, signal.min, signal.max, 0.0, signal.y_size) + signal.y_base);
+		    let c = pt2(r_x, map_range(0.0, signal.min, signal.max, 0.0, wh.y) + signal.y_base);
+		    let d = pt2(l_x, map_range(0.0, signal.min, signal.max, 0.0, wh.y) + signal.y_base);
 		    geom::Quad([a, b, c, d]).triangles_iter()
 		})
 		.map(|tri| {
@@ -329,7 +357,10 @@ impl DebugObjects
 	if tokens.len() >= 1 {
 	    if keyword == "SCOPE" {
 		debug!("created Scope object named {}", tokens[0]);
-		return Some(DebugObject::Scope(Scope::new(tokens)))
+		if let Some(scope) = Scope::new(tokens).ok()
+		{
+		    return Some(DebugObject::Scope(scope))
+		}
 	    }
 	}
 	None
@@ -369,11 +400,6 @@ mod tests {
 	}
     }
 
-    fn to_tokens(tokens: &[&str]) -> Vec<String>
-    {
-	tokens.iter().map(|s| { s.to_string() }).collect()
-    }
-
     #[test]
     fn test_configuration_commandline() {
 	let tokens = to_tokens(&["MyScope", "SIZE", "254", "84", "SAMPLES", "128"]);
@@ -382,4 +408,16 @@ mod tests {
 	assert_eq!(scope_config.size, pt2(254.0, 84.0));
 	assert_eq!(scope_config.samples, 128);
     }
+
+    #[test]
+    fn test_configuration_signal() {
+	let tokens = to_tokens(&["'Sawtooth'", "0", "63", "64", "10", "%1111"]);
+	let signal_config = ScopeSignalConfig::from_tokens(&tokens).expect("invalid configuration");
+	assert_eq!(signal_config.name, "Sawtooth");
+	assert_eq!(signal_config.min, 0.0);
+	assert_eq!(signal_config.max, 63.0);
+	assert_eq!(signal_config.y_size, 64.0);
+	assert_eq!(signal_config.y_base, 10.0);
+    }
+
 }

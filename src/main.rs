@@ -7,7 +7,7 @@ mod serial;
 mod debugobjects;
 
 use serial::SerialConnector;
-use debugobjects::{Scope, DebugProcessor, DebugLine};
+use debugobjects::{Scope, DebugProcessor, DebugLine, to_tokens};
 
 const BAUD:u32 = 230_400;
 const PORT:&str = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_00000000-if00-port0";
@@ -18,7 +18,8 @@ struct Model {
 }
 
 fn model(_app: &App) -> Model {
-    let scope = Scope::new(&vec!["Test".to_string()]);
+    let mut scope = Scope::new(&to_tokens(&["'Test'"])).expect("malformed scope configuration");
+    scope.setup_signal(&to_tokens(&["'Sawtooth'", "0", "63", "64", "10", "%1111"])).expect("malformed signal configuration");
     let serial = SerialConnector::new(PORT, BAUD).expect("serial port failed");
     assert!(scope.name() == "Test");
     Model { scope, serial }
