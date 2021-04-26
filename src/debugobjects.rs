@@ -249,7 +249,6 @@ impl DebugProcessor for Scope {
 		.map(|tri| {
 		    // Color the vertices based on their amplitude.
 		    tri.map_vertices(|v| {
-			let y_fract = map_range(v.y.abs(), 0.0, wh.y, 0.0, 1.0);
 			(v, signal.color)
 		    })
 		});
@@ -347,6 +346,13 @@ impl DebugObjects
 		    _ => { warn!("No factory found for {}", line.keyword); }
 		}
 	    }
+	}
+    }
+
+    pub fn draw(&self, draw: &nannou::draw::Draw)
+    {
+	for (_, debug_object) in &self.objects {
+	    debug_object.draw(draw);
 	}
     }
 
