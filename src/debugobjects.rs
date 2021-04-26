@@ -3,9 +3,47 @@ use std::collections::hash_map::HashMap;
 use std::vec::Vec;
 use std::collections::VecDeque;
 use log::{debug, warn};
+use thiserror::Error;
 
 type Rect = nannou::geom::rect::Rect;
 type Color = Rgb<u8>;
+
+
+#[derive(Error, Debug)]
+pub enum DebugObjectError
+{
+    #[error("No name given for the DebugObject")]
+    NoNameGiven,
+    #[error("Invalid format {0}")]
+    InvalidFormat(String),
+    #[error("Unknown error")]
+    Unknown,
+    #[error("IndexError")]
+    IndexError,
+    #[error("ParseNumberError")]
+    ParseNumberError,
+}
+
+impl From<std::num::ParseFloatError> for DebugObjectError {
+    fn from(_error: std::num::ParseFloatError) -> Self {
+	DebugObjectError::ParseNumberError
+    }
+}
+
+impl From<std::num::ParseIntError> for DebugObjectError {
+    fn from(_error: std::num::ParseIntError) -> Self {
+	DebugObjectError::ParseNumberError
+    }
+}
+
+
+fn strip_single_quotes(input: &str) -> &str
+{
+    let v: Vec<&str> = input.split("'").collect();
+    unsafe {
+	v.get_unchecked(v.len() / 2)
+    }
+}
 
 pub struct DebugLine
 {
@@ -15,7 +53,7 @@ pub struct DebugLine
 
 impl DebugLine
 {
-    pub fn from_str(line: &str) -> std::result::Result<DebugLine, String>
+    pub fn from_str(line: &str) -> std::result::Result<DebugLine, DebugObjectError>
     {
 	let tokens:Vec<String> = line.split_whitespace().map(|s| { s.to_string() }).filter(|part| { part.len() > 0 }).collect();
 	if tokens.len() > 0{
@@ -25,7 +63,7 @@ impl DebugLine
 		return Ok(DebugLine{keyword: keyword, tokens: tokens[1..].to_vec()});
 	    }
 	}
-	Err(format!("Can't parse line '{}'", line))
+	Err(DebugObjectError::InvalidFormat(line.to_string()))
     }
 }
 
@@ -34,6 +72,48 @@ pub trait DebugProcessor
     fn name(&self) -> String;
     fn draw(&self, draw: &nannou::draw::Draw);
     fn feed(&mut self, tokens: Vec<String>);
+}
+
+struct ScopeConfig
+{
+    name: String,
+    pos: Point2,
+    size: Point2,
+    samples: usize,
+    rate: usize,
+    color: Color,
+}
+
+impl ScopeConfig
+{
+    fn from_tokens(tokens: &Vec<String>) -> Result<ScopeConfig, DebugObjectError>
+    {
+	let name = tokens.get(0).ok_or(DebugObjectError::NoNameGiven)?;
+	let pos = pt2(0.0, 0.0);
+	let mut size = pt2(255.0, 256.0);
+	let mut samples: usize = 256;
+	let rate: usize = 1;
+	let color = BLACK;
+	let mut index: usize = 1;
+	while index < tokens.len() {
+	    let command = tokens.get(index).ok_or(DebugObjectError::IndexError)?;
+	    debug!("ScopeConfig: attempting to decode {} at index {}", &command, index);
+	    if command == "SIZE" {
+		let width = tokens.get(index + 1).ok_or(DebugObjectError::IndexError)?.parse::<f32>()?;
+		let height = tokens.get(index + 2).ok_or(DebugObjectError::IndexError)?.parse::<f32>()?;
+		size = pt2(width, height);
+		debug!("decoded SIZE: {:?}", size);
+		index += 3
+	    } else if command == "SAMPLES" {
+		samples = tokens.get(index + 1).ok_or(DebugObjectError::IndexError)?.parse::<usize>()?;
+                index += 2;
+	    } else {
+		warn!("Not implemented");
+		break;
+	    }
+	}
+	Ok(ScopeConfig{ name: strip_single_quotes(name).to_string(), pos, size, samples, rate, color })
+    }
 }
 
 struct ScopeSignal
@@ -107,6 +187,11 @@ impl Scope {
 		}
 	    });
     }
+
+    fn setup_signal(&mut self, tokens: &Vec<String>) -> Result<(), String>
+    {
+	Err("not implemented".to_string())
+    }
 }
 
 impl DebugProcessor for Scope {
@@ -149,7 +234,7 @@ impl DebugProcessor for Scope {
     {
 	let mut err = Ok(());
 	let mut floats = vec![];
-	for token in tokens {
+	for token in &tokens {
 	    match token.parse::<f32>() {
 		Ok(number) => {
 		    floats.push(number);
@@ -165,7 +250,9 @@ impl DebugProcessor for Scope {
 		self.feed_floats(floats);
 	    }
 	    _ => {
-		warn!("couldn't parse floats, maybe config line");
+		if self.setup_signal(&tokens).is_err() {
+		    warn!("couldn't setup signal with {:?}", &tokens);
+		}
 	    }
 	}
     }
@@ -255,7 +342,7 @@ mod tests {
     use super::*;
     use test_env_log::test;
 
-      const SCOPE_DECLARATION:&str = "`SCOPE MyScope SIZE 254 84 SAMPLES 128\r\n\
+    const SCOPE_DECLARATION:&str = "`SCOPE MyScope SIZE 254 84 SAMPLES 128\r\n\
 `MyScope 'Sawtooth' 0 63 64 10 %1111\r\n\
 `MyScope 31\r\n\
 `MyScope 32\r\n\
@@ -269,6 +356,7 @@ mod tests {
     fn instantiate_scope_through_debug_objects() {
 	let mut debug_objects = DebugObjects::new();
 	debug_objects.feed("`SCOPE MyScope SIZE 254 84 SAMPLES 128");
+	debug_objects.feed("`MyScope 'Sawtooth' 0 63 64 10 %1111");
     }
 
     #[test]
@@ -279,5 +367,19 @@ mod tests {
 	{
 	    debug_objects.feed(line);
 	}
+    }
+
+    fn to_tokens(tokens: &[&str]) -> Vec<String>
+    {
+	tokens.iter().map(|s| { s.to_string() }).collect()
+    }
+
+    #[test]
+    fn test_configuration_commandline() {
+	let tokens = to_tokens(&["MyScope", "SIZE", "254", "84", "SAMPLES", "128"]);
+	let scope_config = ScopeConfig::from_tokens(&tokens).expect("invalid configuration");
+	assert_eq!(scope_config.name, "MyScope");
+	assert_eq!(scope_config.size, pt2(254.0, 84.0));
+	assert_eq!(scope_config.samples, 128);
     }
 }
