@@ -170,7 +170,8 @@ pub struct Scope
     name: String,
     samples: usize, // Number of retained samples
     rect: Rect,
-
+    background: Color,
+    grid: Color,
     signals: Vec<ScopeSignal>
 }
 
@@ -184,6 +185,8 @@ impl Scope {
 	    name: config.name,
 	    samples: config.samples,
 	    rect: Rect::from_x_y_w_h(0.0, 0.0, config.size.x, config.size.y),
+	    background: BLACK,
+	    grid: GREY,
 	    signals: vec![],
 	};
 	Ok(res)
@@ -233,27 +236,26 @@ impl DebugProcessor for Scope {
 	let xy = self.rect.xy();
 	let wh = self.rect.wh();
 	let step = wh.x / (self.samples as f32 - 1.0);
-	draw.rect().xy(xy).wh(wh).color(YELLOW);
+	draw.rect().xy(xy).wh(wh).color(self.background);
+	let draw = draw.xy(-wh / 2.0);
+	draw.line().weight(1.0).color(self.grid).start(xy).end(xy + pt2(wh.x, 0.0));
+	draw.line().weight(1.0).color(self.grid).start(xy).end(xy + pt2(0.0, wh.y));
+	draw.line().weight(1.0).color(self.grid).start(xy + pt2(wh.x, 0.0)).end(xy + wh);
+	draw.line().weight(1.0).color(self.grid).start(xy + pt2(0.0, wh.y)).end(xy + wh);
 	self.signals.iter().for_each(|signal| {
-	    // Create an iterator yielding triangles for drawing a sine wave.
-	    let tris = signal.values.iter().zip(signal.values.iter().skip(1)).enumerate()
-		.flat_map(|(i, (left, right))| {
-		    let l_x = step * i as f32;
-		    let r_x = step * (i + 1) as f32;
-		    let a = pt2(l_x, map_range(*left, signal.min, signal.max, 0.0, signal.y_size) + signal.y_base);
-		    let b = pt2(r_x, map_range(*right, signal.min, signal.max, 0.0, signal.y_size) + signal.y_base);
-		    let c = pt2(r_x, map_range(0.0, signal.min, signal.max, 0.0, wh.y) + signal.y_base);
-		    let d = pt2(l_x, map_range(0.0, signal.min, signal.max, 0.0, wh.y) + signal.y_base);
-		    geom::Quad([a, b, c, d]).triangles_iter()
-		})
-		.map(|tri| {
-		    // Color the vertices based on their amplitude.
-		    tri.map_vertices(|v| {
-			(v, signal.color)
-		    })
+	    // Draw polygon
+	    let vertices = signal.values.iter().enumerate()
+		.map(|(i, value)| {
+		    let v = map_range(*value, signal.min, signal.max, 0.0, signal.y_size) + signal.y_base;
+		    (pt2(i as f32 * step, v), signal.color)
 		});
-	    // Draw the mesh!
-	    draw.xy(-wh / 2.0).mesh().tris_colored(tris);
+	    for v in &[signal.min, signal.max] {
+		let v = map_range(*v, signal.min, signal.max, 0.0, signal.y_size) + signal.y_base;
+		draw.line().weight(1.0).color(self.grid).start(xy + pt2(0.0, v)).end(xy + pt2(wh.x, 0.0) + pt2(0.0, v));
+	    }
+	    draw.polyline()
+		.weight(1.0)
+		.points_colored(vertices);
 	});
     }
 
