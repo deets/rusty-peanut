@@ -28,8 +28,10 @@ impl LineProtocol
 		l >= 2 && *self.bytes.get_unchecked(l - 2) == 13 as u8 && *self.bytes.get_unchecked(l - 1) == 10 as u8
 	    };
 	    if ends_with_crlf {
-		let s = std::str::from_utf8(&self.bytes[0..self.bytes.len() - 2]).expect("encoding error");
-		func(s);
+		if let Ok(s) = std::str::from_utf8(&self.bytes[0..self.bytes.len() - 2])
+		{
+		    func(s);
+		}
 		self.bytes.clear();
 	    }
 	}
