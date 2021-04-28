@@ -7,10 +7,20 @@ use thiserror::Error;
 
 type Rect = nannou::geom::rect::Rect;
 type Color = Rgb<u8>;
+type Point2 = nannou::geom::Point2<f32>;
 
-pub fn to_tokens(tokens: &[&str]) -> Vec<String>
+struct Style
 {
-    tokens.iter().map(|s| { s.to_string() }).collect()
+    font_size: u32,
+    signal_name_offset: Point2,
+}
+
+impl Style
+{
+    fn new() -> Style
+    {
+	Style{ font_size: 15, signal_name_offset: pt2(0.0, 6.0) }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -20,8 +30,6 @@ pub enum DebugObjectError
     NoNameGiven,
     #[error("Invalid format {0}")]
     InvalidFormat(String),
-    #[error("Unknown error")]
-    Unknown,
     #[error("IndexError")]
     IndexError,
     #[error("ParseNumberError")]
@@ -181,10 +189,10 @@ impl Scope {
     {
 	let config = ScopeConfig::from_tokens(tokens)?;
 
-	let mut res = Scope{
+	let res = Scope{
 	    name: config.name,
 	    samples: config.samples,
-	    rect: Rect::from_x_y_w_h(0.0, 0.0, config.size.x, config.size.y),
+	    rect: Rect::from_x_y_w_h(config.pos.x, config.pos.y, config.size.x, config.size.y),
 	    background: BLACK,
 	    grid: GREY,
 	    signals: vec![],
@@ -233,11 +241,24 @@ impl DebugProcessor for Scope {
 
     fn draw(&self, draw: &nannou::draw::Draw)
     {
+	let style = Style::new();
+
 	let xy = self.rect.xy();
 	let wh = self.rect.wh();
+
+	let mut cursor = pt2(0.0, wh.y) + style.signal_name_offset;
+
+	fn draw_signal_name(draw: &nannou::draw::Draw, signal: &ScopeSignal, cursor: Point2, style: &Style) -> Point2
+	{
+	    // the rectangle is for wrapping, so we make it really big to avoid that wrapping
+	    let text = text(&signal.name).font_size(style.font_size).build(Rect::from_w_h(1000.0, 1000.0));
+	    let bounding_rect = text.bounding_rect();
+	    draw.xy(cursor + bounding_rect.wh() / 2.0).path().fill().color(signal.color).events(text.path_events());
+	    cursor + pt2(bounding_rect.w(), 0.0)
+	}
+
 	let step = wh.x / (self.samples as f32 - 1.0);
-	draw.rect().xy(xy).wh(wh).color(self.background);
-	let draw = draw.xy(-wh / 2.0);
+	draw.rect().xy(xy + wh / 2.0).wh(wh).color(self.background);
 	draw.line().weight(1.0).color(self.grid).start(xy).end(xy + pt2(wh.x, 0.0));
 	draw.line().weight(1.0).color(self.grid).start(xy).end(xy + pt2(0.0, wh.y));
 	draw.line().weight(1.0).color(self.grid).start(xy + pt2(wh.x, 0.0)).end(xy + wh);
@@ -253,6 +274,9 @@ impl DebugProcessor for Scope {
 		let v = map_range(*v, signal.min, signal.max, 0.0, signal.y_size) + signal.y_base;
 		draw.line().weight(1.0).color(self.grid).start(xy + pt2(0.0, v)).end(xy + pt2(wh.x, 0.0) + pt2(0.0, v));
 	    }
+	    cursor = draw_signal_name(draw, signal, cursor, &style);
+
+	    // Draw the actual waveform
 	    draw.polyline()
 		.weight(1.0)
 		.points_colored(vertices);
@@ -390,6 +414,11 @@ mod tests {
 `MyScope 35\r\n\
 `MyScope 36\r\n\
 ";
+
+    fn to_tokens(tokens: &[&str]) -> Vec<String>
+    {
+	tokens.iter().map(|s| { s.to_string() }).collect()
+    }
 
     #[test]
     fn instantiate_scope_through_debug_objects() {

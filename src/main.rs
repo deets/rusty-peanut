@@ -7,7 +7,7 @@ mod serial;
 mod debugobjects;
 
 use serial::SerialConnector;
-use debugobjects::{DebugObjects, DebugProcessor, DebugLine, to_tokens};
+use debugobjects::{DebugObjects};
 
 const BAUD:u32 = 230_400;
 const PORT:&str = "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_00000000-if00-port0";
