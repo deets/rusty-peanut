@@ -67,12 +67,8 @@ fn decimal(input: &[u8]) -> IResult<&[u8], i32> {
 }
 
 fn gray_color_parser(input: &[u8]) -> IResult<&[u8], Color> {
-    named!(gray, alt!(
-	tag!("GRAY") |
-	tag!("GREY")));
-
     let (rest, (_name, level)) = separated_pair(
-	gray,
+	alt((tag("GRAY"), tag("GREY"))),
 	tag(" "),
 	decimal)(input)?;
     let level = (5 + level * 25) as u8;
