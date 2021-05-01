@@ -7,11 +7,12 @@ con
 
 pub main() | i
 
-  debug(`SCOPE MyScope SIZE 254 84 SAMPLES 128)
-  debug(`MyScope 'Sawtooth' 0 63 64 10 %1111)
+  debug(`SCOPE MyScope SIZE 254 300 SAMPLES 128)
+  debug(`MyScope 'Sawtooth' 0 63 64 10 %1111 MAGENTA)
+  debug(`MyScope 'Sawtooth2' 0 127 100 100 %1111 CYAN)
 
   i := 0
   repeat
-    debug(`MyScope `(i & 63))
+    debug(`MyScope `(i & 63) `(i & 127))
     i++
     waitms(10)

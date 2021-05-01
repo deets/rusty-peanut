@@ -1,8 +1,6 @@
 #![feature(clamp)]
 use nannou::prelude::*;
 
-use log::{debug};
-
 mod serial;
 mod debugobjects;
 
@@ -26,6 +24,7 @@ fn model(_app: &App) -> Model {
 fn update(_app: &App, model: &mut Model, _update: Update)
 {
     for line in model.serial.receiver.try_iter() {
+	//println!("{}", line);
 	model.views.feed(&line);
     }
 }

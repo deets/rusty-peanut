@@ -4,22 +4,43 @@ use std::vec::Vec;
 use std::collections::VecDeque;
 use log::{debug, warn};
 use thiserror::Error;
+use phf::phf_map;
 
 type Rect = nannou::geom::rect::Rect;
 type Color = Rgb<u8>;
 type Point2 = nannou::geom::Point2<f32>;
 
+static COLOR_MAP: phf::Map<&'static str, Color> = phf_map! {
+    "BLACK" => BLACK,
+    "WHITE" => WHITE,
+    "ORANGE" => ORANGE,
+    "BLUE" => BLUE,
+    "GREEN" => GREEN,
+    "CYAN" => CYAN,
+    "RED" => RED,
+    "MAGENTA" => MAGENTA,
+    "YELLOW" => YELLOW,
+};
+
 struct Style
 {
     font_size: u32,
+    // the offset from the topleft corner we
+    // draw the signal name to
     signal_name_offset: Point2,
+    // Padding between two subsequent signal names
+    signal_name_padding: f32,
 }
 
 impl Style
 {
     fn new() -> Style
     {
-	Style{ font_size: 15, signal_name_offset: pt2(0.0, 6.0) }
+	Style{
+	    font_size: 15,
+	    signal_name_offset: pt2(0.0, 6.0),
+	    signal_name_padding: 4.0,
+	}
     }
 }
 
@@ -86,6 +107,7 @@ pub trait DebugProcessor
     fn feed(&mut self, tokens: Vec<String>);
 }
 
+#[derive(Debug)]
 struct ScopeConfig
 {
     name: String,
@@ -128,6 +150,7 @@ impl ScopeConfig
     }
 }
 
+#[derive(Debug)]
 struct ScopeSignalConfig
 {
     name: String,
@@ -147,7 +170,15 @@ impl ScopeSignalConfig
 	let max = tokens.get(2).ok_or(DebugObjectError::IndexError)?.parse::<f32>()?;
 	let y_size = tokens.get(3).ok_or(DebugObjectError::IndexError)?.parse::<f32>()?;
 	let y_base = tokens.get(4).ok_or(DebugObjectError::IndexError)?.parse::<f32>()?;
-	let color = BLUE;
+	let mut color = YELLOW;
+	if let Some(legend_or_color) = tokens.get(5)
+	{
+	    if legend_or_color.starts_with("%") {
+		if let Some(color_name) = tokens.get(6) {
+		    color = *COLOR_MAP.get::<str>(&color_name).unwrap_or(&YELLOW);
+		}
+	    }
+	}
 
 	Ok(ScopeSignalConfig{
 	    name: strip_single_quotes(name).to_string(),
@@ -174,7 +205,6 @@ struct ScopeSignal
 
 pub struct Scope
 {
-
     name: String,
     samples: usize, // Number of retained samples
     rect: Rect,
@@ -217,7 +247,9 @@ impl Scope {
 
     pub fn setup_signal(&mut self, tokens: &Vec<String>) -> Result<(), DebugObjectError>
     {
+	println!("setup_signal: {:?}", tokens);
 	let sc = ScopeSignalConfig::from_tokens(tokens)?;
+	println!("setup_signal: {:?}", sc);
 	self.signals.push(
 	    ScopeSignal
 	    {
@@ -246,6 +278,8 @@ impl DebugProcessor for Scope {
 	let xy = self.rect.xy();
 	let wh = self.rect.wh();
 
+	let draw = draw.y(-wh.y);
+
 	let mut cursor = pt2(0.0, wh.y) + style.signal_name_offset;
 
 	fn draw_signal_name(draw: &nannou::draw::Draw, signal: &ScopeSignal, cursor: Point2, style: &Style) -> Point2
@@ -254,29 +288,30 @@ impl DebugProcessor for Scope {
 	    let text = text(&signal.name).font_size(style.font_size).build(Rect::from_w_h(1000.0, 1000.0));
 	    let bounding_rect = text.bounding_rect();
 	    draw.xy(cursor + bounding_rect.wh() / 2.0).path().fill().color(signal.color).events(text.path_events());
-	    cursor + pt2(bounding_rect.w(), 0.0)
+	    cursor + pt2(bounding_rect.w() + style.signal_name_padding, 0.0)
 	}
 
 	let step = wh.x / (self.samples as f32 - 1.0);
+
 	draw.rect().xy(xy + wh / 2.0).wh(wh).color(self.background);
 	draw.line().weight(1.0).color(self.grid).start(xy).end(xy + pt2(wh.x, 0.0));
 	draw.line().weight(1.0).color(self.grid).start(xy).end(xy + pt2(0.0, wh.y));
 	draw.line().weight(1.0).color(self.grid).start(xy + pt2(wh.x, 0.0)).end(xy + wh);
 	draw.line().weight(1.0).color(self.grid).start(xy + pt2(0.0, wh.y)).end(xy + wh);
 	self.signals.iter().for_each(|signal| {
-	    // Draw polygon
-	    let vertices = signal.values.iter().enumerate()
-		.map(|(i, value)| {
-		    let v = map_range(*value, signal.min, signal.max, 0.0, signal.y_size) + signal.y_base;
-		    (pt2(i as f32 * step, v), signal.color)
-		});
+	    // Lower/Upper Boundary
 	    for v in &[signal.min, signal.max] {
-		let v = map_range(*v, signal.min, signal.max, 0.0, signal.y_size) + signal.y_base;
-		draw.line().weight(1.0).color(self.grid).start(xy + pt2(0.0, v)).end(xy + pt2(wh.x, 0.0) + pt2(0.0, v));
+		let v = map_range(*v, signal.min, signal.max, 0.0, -signal.y_size) + wh.y - signal.y_base;
+		draw.line().weight(1.0).color(self.grid).start(pt2(0.0, v)).end(pt2(wh.x, 0.0) + pt2(0.0, v));
 	    }
-	    cursor = draw_signal_name(draw, signal, cursor, &style);
+	    cursor = draw_signal_name(&draw, signal, cursor, &style);
 
 	    // Draw the actual waveform
+	    let vertices = signal.values.iter().enumerate()
+		.map(|(i, value)| {
+		    let v = map_range(*value, signal.min, signal.max, 0.0, signal.y_size) - signal.y_size - signal.y_base + wh.y;
+		    (pt2(i as f32 * step, v), signal.color)
+		});
 	    draw.polyline()
 		.weight(1.0)
 		.points_colored(vertices);
@@ -288,6 +323,10 @@ impl DebugProcessor for Scope {
 	let mut err = Ok(());
 	let mut floats = vec![];
 	for token in &tokens {
+	    let mut token = token.clone();
+	    if token.ends_with(",") {
+		token.remove(token.len() - 1);
+	    }
 	    match token.parse::<f32>() {
 		Ok(number) => {
 		    floats.push(number);
@@ -356,20 +395,21 @@ impl DebugObjects
 {
     pub fn feed(&mut self, line: &str)
     {
-	let line = DebugLine::from_str(line).expect("error parsing line");
-	match self.objects.get_mut(&line.keyword) {
-	    Some(debug_object) => {
-		debug!("found DebugObject `{}, feeding to it", debug_object.name());
-		debug_object.feed(line.tokens);
-	    }
-	    None => {
-		debug!("no DebugObject for keyword  {} - trying to create one", line.keyword);
-		match self.create(&line.keyword, &line.tokens)
-		{
-		    Some(new_object) => {
-			self.objects.insert(new_object.name(), new_object);
-		    },
-		    _ => { warn!("No factory found for {}", line.keyword); }
+	if let Ok(line) = DebugLine::from_str(line) {
+	    match self.objects.get_mut(&line.keyword) {
+		Some(debug_object) => {
+		    debug!("found DebugObject `{}, feeding to it", debug_object.name());
+		    debug_object.feed(line.tokens);
+		}
+		None => {
+		    debug!("no DebugObject for keyword  {} - trying to create one", line.keyword);
+		    match self.create(&line.keyword, &line.tokens)
+		    {
+			Some(new_object) => {
+			    self.objects.insert(new_object.name(), new_object);
+			},
+			_ => { warn!("No factory found for {}", line.keyword); }
+		    }
 		}
 	    }
 	}
@@ -448,13 +488,14 @@ mod tests {
 
     #[test]
     fn test_configuration_signal() {
-	let tokens = to_tokens(&["'Sawtooth'", "0", "63", "64", "10", "%1111"]);
+	let tokens = to_tokens(&["'Sawtooth'", "0", "63", "64", "10", "%1111", "CYAN"]);
 	let signal_config = ScopeSignalConfig::from_tokens(&tokens).expect("invalid configuration");
 	assert_eq!(signal_config.name, "Sawtooth");
 	assert_eq!(signal_config.min, 0.0);
 	assert_eq!(signal_config.max, 63.0);
 	assert_eq!(signal_config.y_size, 64.0);
 	assert_eq!(signal_config.y_base, 10.0);
+	assert_eq!(signal_config.color, CYAN);
     }
 
 }
