@@ -15,6 +15,7 @@ nannou = "0.15.0"
 crossbeam = "0.8.0"
 thiserror = "1.0"
 phf = { version="0.8.0", features = ["macros"] }
+nom = "6"
 
 [dev-dependencies]
 test-env-log = "0.2.7"

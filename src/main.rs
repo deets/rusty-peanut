@@ -3,6 +3,7 @@ use nannou::prelude::*;
 
 mod serial;
 mod debugobjects;
+mod parser;
 
 use serial::SerialConnector;
 use debugobjects::{DebugObjects};
