@@ -6,12 +6,10 @@ use nom::character::complete::one_of;
 use nom::sequence::terminated;
 use nom::multi::many1;
 use nom::combinator::recognize;
-use nom::character::is_digit;
 use nom::{
     named,
     alt,
     tag,
-    take_while1,
     bytes::complete::{tag},
     sequence::{separated_pair},
     IResult,
@@ -20,6 +18,15 @@ use phf::phf_map;
 use nannou::prelude::*;
 
 type Color = Rgb<u8>;
+
+mod ast {
+    #[derive(Debug, PartialEq)]
+    pub enum ScopeConfig
+    {
+	Size(i32, i32),
+	Samples(i32),
+    }
+}
 
 static COLOR_MAP: phf::Map<&[u8], Color> = phf_map! {
     b"BLACK" => BLACK,
@@ -49,12 +56,14 @@ fn named_color_parser(input: &[u8]) -> IResult<&[u8], Color> {
     Ok((rest, *COLOR_MAP.get(color).unwrap()))
 }
 
-fn decimal(input: &[u8]) -> IResult<&[u8], &[u8]> {
-  recognize(
-    many1(
-      terminated(one_of("0123456789"), many0(char('_')))
-    )
-  )(input)
+fn decimal(input: &[u8]) -> IResult<&[u8], i32> {
+    let (rest, number_literal) = recognize(
+	many1(
+	    terminated(one_of("0123456789"), many0(char('_')))
+	)
+    )(input)?;
+    let number = std::str::from_utf8(number_literal).expect("parser error").parse::<i32>().expect("parser error");
+    Ok((rest, number))
 }
 
 fn gray_color_parser(input: &[u8]) -> IResult<&[u8], Color> {
@@ -66,13 +75,34 @@ fn gray_color_parser(input: &[u8]) -> IResult<&[u8], Color> {
 	gray,
 	tag(" "),
 	decimal)(input)?;
-    let level = std::str::from_utf8(level).expect("parser error").parse::<i32>().expect("parser error");
     let level = (5 + level * 25) as u8;
     Ok((rest, Color::new(level, level, level)))
 }
 
 fn color_parser(input: &[u8]) -> IResult<&[u8], Color> {
     alt((gray_color_parser, named_color_parser))(input)
+}
+
+fn size_parser(input: &[u8]) -> IResult<&[u8], ast::ScopeConfig> {
+    let (rest, (_, (x, y))) = separated_pair(
+	tag("SIZE"),
+	tag(" "),
+	separated_pair(
+	    decimal,
+	    tag(" "),
+	    decimal
+	)
+    )(input)?;
+    Ok((rest, ast::ScopeConfig::Size(x, y)))
+}
+
+fn samples_parser(input: &[u8]) -> IResult<&[u8], ast::ScopeConfig> {
+    let (rest, (_, samples)) = separated_pair(
+	tag("SAMPLES"),
+	tag(" "),
+	decimal,
+    )(input)?;
+    Ok((rest, ast::ScopeConfig::Samples(samples)))
 }
 
 #[cfg(test)]
@@ -87,6 +117,18 @@ mod tests {
 	assert_eq!(result, Color::new(30, 30, 30));
 	let (_rest, result) = color_parser(b"GRAY 10").unwrap();
 	assert_eq!(result, Color::new(255, 255, 255));
+    }
+
+    #[test]
+    fn parse_size() {
+	let (_rest, result) = size_parser(b"SIZE 100 200").unwrap();
+	assert_eq!(result, ast::ScopeConfig::Size(100, 200));
+    }
+
+    #[test]
+    fn parse_samples() {
+	let (_rest, result) = samples_parser(b"SAMPLES 128").unwrap();
+	assert_eq!(result, ast::ScopeConfig::Samples(128));
     }
 
 }
