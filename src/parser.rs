@@ -1,6 +1,6 @@
 extern crate nom;
 use nom::branch::alt;
-use nom::sequence::{tuple, preceded, terminated};
+use nom::sequence::{tuple, preceded, terminated, delimited};
 use nom::character::complete::{one_of, alphanumeric1, char};
 use nom::multi::many0;
 use nom::multi::many1;
@@ -24,8 +24,12 @@ mod ast {
     {
 	// Keywords
 	SCOPE,
-	//
+	// Name
+	Identifier{value: String},
+	// `Name
 	Symbol{value: String},
+	// 'String'
+	String{value: String},
 	// SCOPE Parameters
 	Size(i32, i32),
 	Samples(i32),
@@ -67,6 +71,17 @@ fn scope_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
     Ok((rest, ast::DebugInstruction::SCOPE))
 }
 
+fn identifier_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, value) =
+	recognize(many1(
+	    alt((
+		alphanumeric1,
+		tag("_")))
+	))(input)?;
+    let value = std::str::from_utf8(value).expect("parser error").to_string();
+    Ok((rest, ast::DebugInstruction::Identifier{ value }))
+}
+
 fn symbol_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
     let (rest, value) =
 	preceded(
@@ -79,6 +94,22 @@ fn symbol_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
 	)(input)?;
     let value = std::str::from_utf8(value).expect("parser error").to_string();
     Ok((rest, ast::DebugInstruction::Symbol{ value }))
+}
+
+fn string_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, value) =
+	delimited(
+	    tag("'"),
+	    recognize(many0(
+		alt((
+		    alphanumeric1,
+		    tag(" "),
+		    tag("_")))
+	    )),
+	    tag("'")
+	)(input)?;
+    let value = std::str::from_utf8(value).expect("parser error").to_string();
+    Ok((rest, ast::DebugInstruction::String{ value }))
 }
 
 fn decimal(input: &[u8]) -> IResult<&[u8], i32> {
@@ -195,5 +226,25 @@ mod tests {
 	let (_rest, result) = symbol_parser(b"`SpaceSignal").unwrap();
 	assert_eq!(result, ast::DebugInstruction::Symbol{ value: "SpaceSignal".to_string() });
     }
+
+    #[test]
+    fn parse_string() {
+	let (_rest, result) = string_parser(b"'String'").unwrap();
+	assert_eq!(result, ast::DebugInstruction::String{ value: "String".to_string() });
+	let (_rest, result) = string_parser(b"'String with Space'").unwrap();
+	assert_eq!(result, ast::DebugInstruction::String{ value: "String with Space".to_string() });
+	let (_rest, result) = string_parser(b"'String_with_underscores'").unwrap();
+	assert_eq!(result, ast::DebugInstruction::String{ value: "String_with_underscores".to_string() });
+    }
+
+    #[test]
+    fn parse_identifier() {
+	let (_rest, result) = identifier_parser(b"Identifier").unwrap();
+	assert_eq!(result, ast::DebugInstruction::Identifier{ value: "Identifier".to_string() });
+    }
+    // #[test]
+    // fn parse_scope_declaration() {
+    // 	"`SCOPE MyScope SIZE 254 84 SAMPLES 128"
+    // }
 
 }
