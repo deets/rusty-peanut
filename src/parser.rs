@@ -1,7 +1,12 @@
 extern crate nom;
 use nom::branch::alt;
 use nom::sequence::{tuple, preceded, terminated, delimited};
-use nom::character::complete::{one_of, alphanumeric1, char};
+use nom::character::complete::{
+    one_of,
+    alphanumeric1,
+    char,
+    multispace1
+};
 use nom::multi::many0;
 use nom::multi::many1;
 use nom::combinator::recognize;
@@ -19,6 +24,8 @@ use nannou::prelude::*;
 type Color = Rgb<u8>;
 
 mod ast {
+    use super::*;
+
     #[derive(Debug, PartialEq)]
     pub enum DebugInstruction
     {
@@ -31,8 +38,17 @@ mod ast {
 	// 'String'
 	String{value: String},
 	// SCOPE Parameters
+	Title(String),
+	Pos(i32, i32),
 	Size(i32, i32),
 	Samples(i32),
+	Rate(i32),
+	DotSize(i32),
+	LineSize(i32),
+	TextSize(i32),
+	Color{ back: Color, grid: Option<Color> },
+	// TODO: packed data
+	// SCOPE Signal Configurations
 	Legend{ max: bool, min: bool, max_line: bool, min_line: bool}
     }
 }
@@ -65,9 +81,29 @@ fn named_color_parser(input: &[u8]) -> IResult<&[u8], Color> {
     Ok((rest, *COLOR_MAP.get(color).unwrap()))
 }
 
+// Keywords
+named!(scope_keyword, tag!("SCOPE"));
+named!(title_keyword, tag!("TITLE"));
+named!(pos_keyword, tag!("POS"));
+named!(size_keyword, tag!("SIZE"));
+named!(samples_keyword, tag!("SAMPLES"));
+named!(rate_keyword, tag!("RATE"));
+named!(dotsize_keyword, tag!("DOTSIZE"));
+named!(linesize_keyword, tag!("LINESIZE"));
+named!(textsize_keyword, tag!("TEXTSIZE"));
+named!(color_keyword, tag!("COLOR"));
+
+fn string_from_atom(identifier: &ast::DebugInstruction) -> String
+{
+    match identifier {
+	ast::DebugInstruction::Identifier{ value: identifier } => { return identifier.clone(); },
+	ast::DebugInstruction::String{ value: string } => { return string.clone(); },
+	_ => { panic!("Grave parsing error"); }
+    };
+}
+
 fn scope_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
-    named!(scope, tag!("SCOPE"));
-    let (rest, _) = scope(input)?;
+    let (rest, _) = scope_keyword(input)?;
     Ok((rest, ast::DebugInstruction::SCOPE))
 }
 
@@ -88,11 +124,7 @@ fn symbol_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
 	    tag("`"),
 	    identifier_parser
 	)(input)?;
-    let identifier = match value {
-	ast::DebugInstruction::Identifier{ value: identifier } => identifier,
-	_ => { panic!("Grave parsing error"); }
-    };
-    Ok((rest, ast::DebugInstruction::Symbol{ value: identifier }))
+    Ok((rest, ast::DebugInstruction::Symbol{ value: string_from_atom(&value) }))
 }
 
 fn string_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
@@ -124,36 +156,95 @@ fn decimal(input: &[u8]) -> IResult<&[u8], i32> {
 fn gray_color_parser(input: &[u8]) -> IResult<&[u8], Color> {
     let (rest, (_name, level)) = separated_pair(
 	alt((tag("GRAY"), tag("GREY"))),
-	tag(" "),
+	multispace1,
 	decimal)(input)?;
     let level = (5 + level * 25) as u8;
     Ok((rest, Color::new(level, level, level)))
 }
 
-fn color_parser(input: &[u8]) -> IResult<&[u8], Color> {
+fn color_value_parser(input: &[u8]) -> IResult<&[u8], Color> {
     alt((gray_color_parser, named_color_parser))(input)
 }
 
 fn size_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
     let (rest, (_, (x, y))) = separated_pair(
-	tag("SIZE"),
-	tag(" "),
+	size_keyword,
+	multispace1,
 	separated_pair(
 	    decimal,
-	    tag(" "),
+	    multispace1,
 	    decimal
 	)
     )(input)?;
     Ok((rest, ast::DebugInstruction::Size(x, y)))
 }
 
+fn pos_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, (_, (x, y))) = separated_pair(
+	pos_keyword,
+	multispace1,
+	separated_pair(
+	    decimal,
+	    multispace1,
+	    decimal
+	)
+    )(input)?;
+    Ok((rest, ast::DebugInstruction::Pos(x, y)))
+}
+
 fn samples_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
     let (rest, (_, samples)) = separated_pair(
-	tag("SAMPLES"),
-	tag(" "),
+	samples_keyword,
+	multispace1,
 	decimal,
     )(input)?;
     Ok((rest, ast::DebugInstruction::Samples(samples)))
+}
+
+fn rate_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, (_, rate)) = separated_pair(
+	rate_keyword,
+	multispace1,
+	decimal,
+    )(input)?;
+    Ok((rest, ast::DebugInstruction::Rate(rate)))
+}
+
+fn title_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, (_, title)) = separated_pair(
+	title_keyword,
+	multispace1,
+	string_parser,
+    )(input)?;
+
+    Ok((rest, ast::DebugInstruction::Title(string_from_atom(&title))))
+}
+
+fn dotsize_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, (_, dotsize)) = separated_pair(
+	dotsize_keyword,
+	multispace1,
+	decimal,
+    )(input)?;
+    Ok((rest, ast::DebugInstruction::DotSize(dotsize)))
+}
+
+fn linesize_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, (_, linesize)) = separated_pair(
+	linesize_keyword,
+	multispace1,
+	decimal,
+    )(input)?;
+    Ok((rest, ast::DebugInstruction::LineSize(linesize)))
+}
+
+fn textsize_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, (_, textsize)) = separated_pair(
+	textsize_keyword,
+	multispace1,
+	decimal,
+    )(input)?;
+    Ok((rest, ast::DebugInstruction::TextSize(textsize)))
 }
 
 fn legend_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
@@ -185,29 +276,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_color() {
-	let (_rest, result) = color_parser(b"YELLOW").unwrap();
+    fn parse_color_value() {
+	let (_rest, result) = color_value_parser(b"YELLOW").unwrap();
 	assert_eq!(result, YELLOW);
-	let (_rest, result) = color_parser(b"GRAY 1").unwrap();
+	let (_rest, result) = color_value_parser(b"GRAY 1").unwrap();
 	assert_eq!(result, Color::new(30, 30, 30));
-	let (_rest, result) = color_parser(b"GRAY 10").unwrap();
+	let (_rest, result) = color_value_parser(b"GRAY 10").unwrap();
 	assert_eq!(result, Color::new(255, 255, 255));
     }
 
     #[test]
-    fn parse_size() {
-	let (_rest, result) = size_parser(b"SIZE 100 200").unwrap();
+    fn parse_scope_configurations() {
+	let (_rest, result) = title_parser(b"TITLE  'FooBarBaz'").unwrap();
+	assert_eq!(result, ast::DebugInstruction::Title("FooBarBaz".to_string()));
+	let (_rest, result) = pos_parser(b"POS   100   200").unwrap();
+	assert_eq!(result, ast::DebugInstruction::Pos(100, 200));
+	let (_rest, result) = size_parser(b"SIZE   100   200").unwrap();
 	assert_eq!(result, ast::DebugInstruction::Size(100, 200));
-    }
-
-    #[test]
-    fn parse_samples() {
-	let (_rest, result) = samples_parser(b"SAMPLES 128").unwrap();
+	let (_rest, result) = samples_parser(b"SAMPLES  128").unwrap();
 	assert_eq!(result, ast::DebugInstruction::Samples(128));
+	let (_rest, result) = rate_parser(b"RATE  128").unwrap();
+	assert_eq!(result, ast::DebugInstruction::Rate(128));
+	let (_rest, result) = dotsize_parser(b"DOTSIZE  12").unwrap();
+	assert_eq!(result, ast::DebugInstruction::DotSize(12));
+	let (_rest, result) = linesize_parser(b"LINESIZE  12").unwrap();
+	assert_eq!(result, ast::DebugInstruction::LineSize(12));
+	let (_rest, result) = textsize_parser(b"TEXTSIZE  12").unwrap();
+	assert_eq!(result, ast::DebugInstruction::TextSize(12));
     }
 
     #[test]
-    fn parse_legend() {
+    fn parse_signal_legend() {
 	let (_rest, result) = legend_parser(b"%1010").unwrap();
 	assert_eq!(result, ast::DebugInstruction::Legend{
 	    max: true, min: false, max_line: true, min_line: false}
