@@ -1,9 +1,8 @@
 extern crate nom;
 use nom::branch::alt;
-use nom::character::complete::char;
+use nom::sequence::{tuple, preceded, terminated};
+use nom::character::complete::{one_of, alphanumeric1, char};
 use nom::multi::many0;
-use nom::character::complete::one_of;
-use nom::sequence::terminated;
 use nom::multi::many1;
 use nom::combinator::recognize;
 use nom::{
@@ -21,10 +20,16 @@ type Color = Rgb<u8>;
 
 mod ast {
     #[derive(Debug, PartialEq)]
-    pub enum ScopeConfig
+    pub enum DebugInstruction
     {
+	// Keywords
+	SCOPE,
+	//
+	Symbol{value: String},
+	// SCOPE Parameters
 	Size(i32, i32),
 	Samples(i32),
+	Legend{ max: bool, min: bool, max_line: bool, min_line: bool}
     }
 }
 
@@ -56,6 +61,26 @@ fn named_color_parser(input: &[u8]) -> IResult<&[u8], Color> {
     Ok((rest, *COLOR_MAP.get(color).unwrap()))
 }
 
+fn scope_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    named!(scope, tag!("SCOPE"));
+    let (rest, _) = scope(input)?;
+    Ok((rest, ast::DebugInstruction::SCOPE))
+}
+
+fn symbol_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, value) =
+	preceded(
+	    tag("`"),
+	    recognize(many0(
+		alt((
+		    alphanumeric1,
+		    tag("_")))
+	    ))
+	)(input)?;
+    let value = std::str::from_utf8(value).expect("parser error").to_string();
+    Ok((rest, ast::DebugInstruction::Symbol{ value }))
+}
+
 fn decimal(input: &[u8]) -> IResult<&[u8], i32> {
     let (rest, number_literal) = recognize(
 	many1(
@@ -79,7 +104,7 @@ fn color_parser(input: &[u8]) -> IResult<&[u8], Color> {
     alt((gray_color_parser, named_color_parser))(input)
 }
 
-fn size_parser(input: &[u8]) -> IResult<&[u8], ast::ScopeConfig> {
+fn size_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
     let (rest, (_, (x, y))) = separated_pair(
 	tag("SIZE"),
 	tag(" "),
@@ -89,16 +114,40 @@ fn size_parser(input: &[u8]) -> IResult<&[u8], ast::ScopeConfig> {
 	    decimal
 	)
     )(input)?;
-    Ok((rest, ast::ScopeConfig::Size(x, y)))
+    Ok((rest, ast::DebugInstruction::Size(x, y)))
 }
 
-fn samples_parser(input: &[u8]) -> IResult<&[u8], ast::ScopeConfig> {
+fn samples_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
     let (rest, (_, samples)) = separated_pair(
 	tag("SAMPLES"),
 	tag(" "),
 	decimal,
     )(input)?;
-    Ok((rest, ast::ScopeConfig::Samples(samples)))
+    Ok((rest, ast::DebugInstruction::Samples(samples)))
+}
+
+fn legend_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, (max, min, max_line, min_line)) = preceded(
+	tag("%"),
+	tuple((
+	    one_of("01"),
+	    one_of("01"),
+	    one_of("01"),
+	    one_of("01"),
+	))
+    )(input)?;
+
+    let max = if max == '1' { true } else { false };
+    let min = if min == '1' { true } else { false };
+    let max_line = if max_line == '1' { true } else { false };
+    let min_line = if min_line == '1' { true } else { false };
+
+    Ok((rest, ast::DebugInstruction::Legend{
+	max: max,
+	min: min,
+	max_line: max_line,
+	min_line: min_line
+    }))
 }
 
 #[cfg(test)]
@@ -118,13 +167,33 @@ mod tests {
     #[test]
     fn parse_size() {
 	let (_rest, result) = size_parser(b"SIZE 100 200").unwrap();
-	assert_eq!(result, ast::ScopeConfig::Size(100, 200));
+	assert_eq!(result, ast::DebugInstruction::Size(100, 200));
     }
 
     #[test]
     fn parse_samples() {
 	let (_rest, result) = samples_parser(b"SAMPLES 128").unwrap();
-	assert_eq!(result, ast::ScopeConfig::Samples(128));
+	assert_eq!(result, ast::DebugInstruction::Samples(128));
+    }
+
+    #[test]
+    fn parse_legend() {
+	let (_rest, result) = legend_parser(b"%1010").unwrap();
+	assert_eq!(result, ast::DebugInstruction::Legend{
+	    max: true, min: false, max_line: true, min_line: false}
+	);
+    }
+
+    #[test]
+    fn parse_keywords() {
+	let (_rest, result) = scope_parser(b"SCOPE").unwrap();
+	assert_eq!(result, ast::DebugInstruction::SCOPE);
+    }
+
+    #[test]
+    fn parse_symbol() {
+	let (_rest, result) = symbol_parser(b"`SpaceSignal").unwrap();
+	assert_eq!(result, ast::DebugInstruction::Symbol{ value: "SpaceSignal".to_string() });
     }
 
 }
