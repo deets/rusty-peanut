@@ -7,8 +7,11 @@ use nom::character::complete::{
     char,
     multispace1
 };
-use nom::multi::many0;
-use nom::multi::many1;
+use nom::multi::{
+    many_m_n,
+    many0,
+    many1
+};
 use nom::combinator::recognize;
 use nom::{
     named,
@@ -46,7 +49,7 @@ mod ast {
 	DotSize(i32),
 	LineSize(i32),
 	TextSize(i32),
-	Color{ back: Color, grid: Option<Color> },
+	Color{ background: Color, grid: Option<Color> },
 	// TODO: packed data
 	// SCOPE Signal Configurations
 	Legend{ max: bool, min: bool, max_line: bool, min_line: bool}
@@ -210,6 +213,19 @@ fn rate_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
     Ok((rest, ast::DebugInstruction::Rate(rate)))
 }
 
+fn color_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
+    let (rest, colors) = preceded(
+	color_keyword,
+	many_m_n(1, 2, preceded(multispace1, color_value_parser)),
+    )(input)?;
+    let background = colors[0];
+    let mut grid = None;
+    if colors.len() == 2 {
+	grid = Some(colors[1]);
+    }
+    Ok((rest, ast::DebugInstruction::Color{ background, grid}))
+}
+
 fn title_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
     let (rest, (_, title)) = separated_pair(
 	title_keyword,
@@ -303,6 +319,11 @@ mod tests {
 	assert_eq!(result, ast::DebugInstruction::LineSize(12));
 	let (_rest, result) = textsize_parser(b"TEXTSIZE  12").unwrap();
 	assert_eq!(result, ast::DebugInstruction::TextSize(12));
+
+	let (_rest, result) = color_parser(b"COLOR  YELLOW").unwrap();
+	assert_eq!(result, ast::DebugInstruction::Color{ background: YELLOW, grid: None });
+	let (_rest, result) = color_parser(b"COLOR  YELLOW   GREEN").unwrap();
+	assert_eq!(result, ast::DebugInstruction::Color{ background: YELLOW, grid: Some(GREEN) });
     }
 
     #[test]
