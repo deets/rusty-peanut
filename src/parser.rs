@@ -86,14 +86,13 @@ fn symbol_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
     let (rest, value) =
 	preceded(
 	    tag("`"),
-	    recognize(many0(
-		alt((
-		    alphanumeric1,
-		    tag("_")))
-	    ))
+	    identifier_parser
 	)(input)?;
-    let value = std::str::from_utf8(value).expect("parser error").to_string();
-    Ok((rest, ast::DebugInstruction::Symbol{ value }))
+    let identifier = match value {
+	ast::DebugInstruction::Identifier{ value: identifier } => identifier,
+	_ => { panic!("Grave parsing error"); }
+    };
+    Ok((rest, ast::DebugInstruction::Symbol{ value: identifier }))
 }
 
 fn string_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction> {
