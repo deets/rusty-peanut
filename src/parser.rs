@@ -1,4 +1,5 @@
 extern crate nom;
+use nom::combinator::opt;
 use nom::sequence::pair;
 use nom::character::complete::multispace0;
 use nom::branch::alt;
@@ -32,6 +33,16 @@ type Color = Rgb<u8>;
 mod ast {
     use super::*;
 
+
+    #[derive(Debug, PartialEq)]
+    pub struct Legend
+    {
+	pub max: bool,
+	pub min: bool,
+	pub max_line: bool,
+	pub min_line: bool
+    }
+
     #[derive(Debug, PartialEq)]
     pub enum DebugInstructionAtom
     {
@@ -54,16 +65,22 @@ mod ast {
 	TextSize(i64),
 	Color{ background: Color, grid: Option<Color> },
 	// TODO: packed data
-	// SCOPE Signal Configurations
-	Legend{ max: bool, min: bool, max_line: bool, min_line: bool}
     }
 
     #[derive(Debug, PartialEq)]
     pub enum DebugInstruction
     {
-	SCOPE{ name: String, configurations: Vec<DebugInstructionAtom> }
+	SCOPE{ name: String, configurations: Vec<DebugInstructionAtom> },
+	SignalDefinition{
+	    name: String,
+	    min: Option<i64>,
+	    max: Option<i64>,
+	    y_size: Option<i64>,
+	    y_base: Option<i64>,
+	    legend: Option<Legend>,
+	    color: Option<Color>
+	}
     }
-
 }
 
 static COLOR_MAP: phf::Map<&[u8], Color> = phf_map! {
@@ -270,7 +287,7 @@ fn textsize_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstructionAtom> {
     Ok((rest, ast::DebugInstructionAtom::TextSize(textsize)))
 }
 
-fn legend_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstructionAtom> {
+fn legend_parser(input: &[u8]) -> IResult<&[u8], ast::Legend> {
     let (rest, (max, min, max_line, min_line)) = preceded(
 	tag("%"),
 	tuple((
@@ -286,7 +303,7 @@ fn legend_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstructionAtom> {
     let max_line = if max_line == '1' { true } else { false };
     let min_line = if min_line == '1' { true } else { false };
 
-    Ok((rest, ast::DebugInstructionAtom::Legend{
+    Ok((rest, ast::Legend{
 	max: max,
 	min: min,
 	max_line: max_line,
@@ -313,6 +330,9 @@ fn scope_definition_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction
     Ok((rest, ast::DebugInstruction::SCOPE{ name: string_from_atom(&name), configurations }))
 }
 
+// The following parsers all imply a keyword with the
+// SCOPE name in the beginning. E.g.
+// `MyScope 1, 2, 3, 4
 fn scope_signal_data_parser(input: &[u8]) -> IResult<&[u8], Vec<i64>> {
     let (rest, (first, mut tail)) = pair(
 	decimal,
@@ -324,6 +344,83 @@ fn scope_signal_data_parser(input: &[u8]) -> IResult<&[u8], Vec<i64>> {
     tail.insert(0, first);
     Ok((rest, tail))
 }
+
+// `MyScope 'Sawtooth' 0 63 64 10 %1111
+fn legend_and_color_parser(input: &[u8]) -> IResult<&[u8], (Option<ast::Legend>, Color)>
+{
+    let (rest, (legend, color)) = pair(
+	opt(terminated(legend_parser, multispace1)),
+	color_value_parser
+    )(input)?;
+    Ok((rest, (legend, color)))
+}
+
+fn scope_signal_declaration_parser(input: &[u8]) -> IResult<&[u8], ast::DebugInstruction>
+{
+    let (rest, (name, arguments)) = pair(
+	string_parser,
+	opt(
+	    pair(
+		preceded(multispace1, decimal), // min
+		opt(
+		    pair(
+			preceded(multispace1, decimal), // max
+			opt(
+			    pair(
+				preceded(multispace1, decimal), // y_size
+				opt(
+				    pair(
+					preceded(multispace1, decimal), // y_base
+					opt(
+					    preceded(multispace1, legend_and_color_parser),
+					)
+				    )
+				)
+			    )
+			)
+		    )
+		)
+	    )
+	)
+	)(input)?;
+
+    let name = string_from_atom(&name);
+    let mut min = None;
+    let mut max = None;
+    let mut y_size = None;
+    let mut y_base = None;
+    let mut color = None;
+    let mut legend = None;
+
+    if let Some((min_value, arguments)) = arguments {
+	min = Some(min_value);
+	if let Some((max_value, arguments)) = arguments {
+	    max = Some(max_value);
+	    if let Some((y_size_value, arguments)) = arguments {
+		y_size = Some(y_size_value);
+		if let Some((y_base_value, arguments)) = arguments {
+		    y_base = Some(y_base_value);
+		    if let Some((legend_value, color_value)) = arguments {
+			color = Some(color_value);
+			legend = legend_value;
+		    }
+		}
+	    }
+	}
+    };
+
+    let result = ast::DebugInstruction::SignalDefinition{
+	name,
+	min: min,
+	max: max,
+	y_size: y_size,
+	y_base: y_base,
+	legend: legend,
+	color: color,
+    };
+    Ok((rest, result))
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -367,7 +464,7 @@ mod tests {
     #[test]
     fn parse_signal_legend() {
 	let (_rest, result) = legend_parser(b"%1010").unwrap();
-	assert_eq!(result, ast::DebugInstructionAtom::Legend{
+	assert_eq!(result, ast::Legend{
 	    max: true, min: false, max_line: true, min_line: false}
 	);
     }
@@ -376,7 +473,7 @@ mod tests {
     fn parse_symbols() {
 	let (_rest, result) = symbol_parser(b"`SpaceSignal").unwrap();
 	assert_eq!(result, ast::DebugInstructionAtom::Symbol{ value: "SpaceSignal".to_string() });
-	let (rest, result) = scope_symbol(b"`SCOPE").unwrap();
+	let (rest, _result) = scope_symbol(b"`SCOPE").unwrap();
 	assert_eq!(rest, b"");
     }
 
@@ -403,7 +500,7 @@ mod tests {
 	    ast::DebugInstruction::SCOPE{ name, configurations } => {
 		assert!(name == "MyScope".to_string());
 	    },
-	    //_ => { assert!(false); }
+	    _ => { assert!(false); }
 	}
     }
 
@@ -412,4 +509,79 @@ mod tests {
 	let (_rest, result) = scope_signal_data_parser(b"1, 2,  3, 4,5").unwrap();
 	assert_eq!(result, vec![1, 2, 3, 4, 5]);
     }
+
+    #[test]
+    fn parse_scope_signal_definition() {
+	let (_rest, (legend, color)) = legend_and_color_parser(b"%1111 YELLOW").unwrap();
+	assert_eq!(color, YELLOW);
+	assert_eq!(legend, Some(ast::Legend{
+	    max: true, min: true, max_line: true, min_line: true}
+	));
+
+	let (_rest, (legend, color)) = legend_and_color_parser(b"YELLOW").unwrap();
+	assert_eq!(color, YELLOW);
+	assert_eq!(legend, None);
+
+	let (_rest, result) = scope_signal_declaration_parser(b"'Sawtooth'").unwrap();
+	match result {
+	    ast::DebugInstruction::SignalDefinition{
+		name,
+		min: _,
+		max: _,
+		y_base: _,
+		y_size: _,
+		legend: _,
+		color: _
+	    } => {
+		assert_eq!(name, "Sawtooth".to_string());
+	    },
+	    _ => { assert!(false); }
+	}
+
+	let (_rest, result) = scope_signal_declaration_parser(b"'Sawtooth' 10 20 30 40 YELLOW").unwrap();
+	match result {
+	    ast::DebugInstruction::SignalDefinition{
+		name,
+		min,
+		max,
+		y_size,
+		y_base,
+		legend: _,
+		color
+	    } => {
+		assert_eq!(name, "Sawtooth".to_string());
+		assert_eq!(min, Some(10));
+		assert_eq!(max, Some(20));
+		assert_eq!(y_size, Some(30));
+		assert_eq!(y_base, Some(40));
+		assert_eq!(color, Some(YELLOW));
+	    },
+	    _ => { assert!(false); }
+	}
+
+	let (_rest, result) = scope_signal_declaration_parser(b"'Sawtooth' 10 20 30 40 %1111 YELLOW").unwrap();
+	match result {
+	    ast::DebugInstruction::SignalDefinition{
+		name,
+		min,
+		max,
+		y_size,
+		y_base,
+		legend,
+		color
+	    } => {
+		assert_eq!(name, "Sawtooth".to_string());
+		assert_eq!(min, Some(10));
+		assert_eq!(max, Some(20));
+		assert_eq!(y_size, Some(30));
+		assert_eq!(y_base, Some(40));
+		assert_eq!(color, Some(YELLOW));
+		assert_eq!(legend, Some(ast::Legend{
+		    max: true, min: true, max_line: true, min_line: true}
+		));
+	    },
+	    _ => { assert!(false); }
+	}
+    }
+
 }
